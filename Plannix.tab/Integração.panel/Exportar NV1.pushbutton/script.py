@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # HEADER
-__title__ = "Exportar XML"
+__title__ = "Exportar NV1"
 __author__ = "Daniel Viegas"
 __doc__ = """Selecione os elementos de interesse do modelo tridimensional do Revit e exporte os seus dados 
 parametrizados para um arquivo XML para ser integrado no software Plannix."""
