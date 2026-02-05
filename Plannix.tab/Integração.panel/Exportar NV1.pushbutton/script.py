@@ -294,35 +294,42 @@ def parameter_get(element, parameter_name):
 
 def filter_elements(list_of_elements):
     accepted_output = []
+
     parametros_obrigatorios = [
         NOMEPECA,
         TIPOPRODUTO,
         GRUPO,
         SECAO,
         INFOADICIONAL,
-        COMPRIMENTO,
+        COMPRIMENTO,      # será tratado dinamicamente para pilares
         VOLUMEUNITARIO
     ]
+
     for element in list_of_elements:
         elemento_valido = True
         nome_para_print = get_nome_peca(element)
+        is_pilar = (
+            element.Category
+            and element.Category.Id.IntegerValue == int(BuiltInCategory.OST_StructuralColumns)
+        )
         for parametro in parametros_obrigatorios:
-            # Busca instância ou tipo
-            param_instancia = element.LookupParameter(parametro)
+            parametro_real = parametro
+            if is_pilar and parametro == COMPRIMENTO:
+                parametro_real = ALTURA
+            param_instancia = element.LookupParameter(parametro_real)
             param_tipo = None
             if not param_instancia:
                 type_id = element.GetTypeId()
                 if type_id and type_id != ElementId.InvalidElementId:
                     element_type = doc.GetElement(type_id)
                     if element_type:
-                        param_tipo = element_type.LookupParameter(parametro)
-
+                        param_tipo = element_type.LookupParameter(parametro_real)
             param = param_instancia or param_tipo
             if not param:
                 print(
                     "O elemento '{}' foi removido porque não possui o parâmetro "
                     "obrigatório '{}' definido."
-                    .format(nome_para_print, parametro)
+                    .format(nome_para_print, parametro_real)
                 )
                 elemento_valido = False
                 break
@@ -331,7 +338,7 @@ def filter_elements(list_of_elements):
                 print(
                     "O elemento '{}' foi removido porque está com o parâmetro "
                     "obrigatório '{}' vazio."
-                    .format(nome_para_print, parametro)
+                    .format(nome_para_print, parametro_real)
                 )
                 elemento_valido = False
                 break
@@ -345,6 +352,10 @@ def filter_elements(list_of_elements):
 
 
 def xml_unit_build(selected_element, quantidade, ids):
+    is_pilar = (
+            selected_element.Category
+            and selected_element.Category.Id.IntegerValue == int(BuiltInCategory.OST_StructuralColumns)
+    )
     nomepeca = get_nome_peca(selected_element)
     codcontrole = parameter_get(selected_element, CODCONTROLE)
     desenho = parameter_get(selected_element, DESENHO)
@@ -352,8 +363,12 @@ def xml_unit_build(selected_element, quantidade, ids):
     grupo = parameter_get(selected_element, GRUPO)
     secao = parameter_get(selected_element, SECAO)
     infoadicional = parameter_get(selected_element, INFOADICIONAL)
-    comprimento = parameter_get(selected_element, COMPRIMENTO)
-    altura = parameter_get(selected_element, ALTURA)
+    if is_pilar:
+        comprimento = parameter_get(selected_element, ALTURA)
+        altura = parameter_get(selected_element, COMPRIMENTO)
+    else:
+        comprimento = parameter_get(selected_element, COMPRIMENTO)
+        altura = parameter_get(selected_element, ALTURA)
     largura = parameter_get(selected_element, LARGURA)
     volumeunitario = parameter_get(selected_element, VOLUMEUNITARIO)
     peso = parameter_get(selected_element, PESO)
@@ -446,8 +461,17 @@ directory_path = os.path.dirname(rvt_path)
 # 3. Define the output file:
 current_datetime = datetime.datetime.now()
 datetime_string = current_datetime.strftime("[%Y-%m-%d][%Hh%Mm]")
-output_string = "Export" + datetime_string + ".xml"
+base_name = "Export" + datetime_string
+extension = ".xml"
+
+output_string = base_name + extension
 xml_file_path = os.path.join(directory_path, output_string)
+
+counter = 1
+while os.path.exists(xml_file_path):
+    output_string = "{} ({}){}".format(base_name, counter, extension)
+    xml_file_path = os.path.join(directory_path, output_string)
+    counter += 1
 
 # 4. Build the xml basic structure:
 xml_header = '<?xml version="1.0" encoding="ISO-8859-1" ?>\n'
