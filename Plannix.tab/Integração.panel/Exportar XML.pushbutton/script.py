@@ -451,7 +451,8 @@ def build_tabela_aco_xml(element):
         rebar_type = doc.GetElement(rebar.GetTypeId())
         param_material = rebar_type.LookupParameter("Material")
         material = param_material.AsValueString() if param_material else ""
-        produto, tipo = extrair_produto_tipo(material)
+        produto = "AÇO"
+        tipo = material
         param_bitola = rebar_type.LookupParameter("Nome do tipo")
         bitola_raw = param_bitola.AsString() if param_bitola else ""
         bitola = limpar_bitola(bitola_raw)
@@ -486,52 +487,128 @@ def build_tabela_aco_xml(element):
         )
     return xml_posicoes
 
+def get_parameter_instance_or_type(element, param_name):
+    param = element.LookupParameter(param_name)
+    if not param:
+        type_id = element.GetTypeId()
+        if type_id and type_id != ElementId.InvalidElementId:
+            element_type = doc.GetElement(type_id)
+            if element_type:
+                param = element_type.LookupParameter(param_name)
+    return param
+
+
 def build_complementos_xml(element):
+
     if element.AssemblyInstanceId == ElementId.InvalidElementId:
         return ""
+
     assembly = doc.GetElement(element.AssemblyInstanceId)
     if not isinstance(assembly, AssemblyInstance):
         return ""
-    grupos = {}
+
+    grupos_estruturais = {}
+    grupos_acessorios = {}
+
     for mid in assembly.GetMemberIds():
+
         membro = doc.GetElement(mid)
         if not membro or not membro.Category:
             continue
+
         if membro.Id == element.Id:
             continue
+
+        # -------------------------
+        # COMPLEMENTO ESTRUTURAL
+        # -------------------------
+
         param_volume = membro.LookupParameter(VOLUMEUNITARIO)
-        if not param_volume:
-            continue
-        try:
-            volume_ft3 = param_volume.AsDouble()
-            volume_m3 = volume_ft3 * 0.028316846592
-        except:
-            continue
-        if volume_m3 <= 0:
-            continue
+        volume_m3 = 0
+
+        if param_volume:
+            try:
+                volume_ft3 = param_volume.AsDouble()
+                volume_m3 = volume_ft3 * 0.028316846592
+            except:
+                volume_m3 = 0
+
         fck = parameter_get(membro, CLASSECONCRETO)
-        if not fck:
-            continue
         produto = parameter_get(membro, TIPOPRODUTO)
-        if not produto:
+
+        if volume_m3 > 0 and fck and produto:
+
+            chave = produto
+
+            if chave not in grupos_estruturais:
+                grupos_estruturais[chave] = {
+                    "qtde": 0,
+                    "soma_volume": 0.0
+                }
+
+            grupos_estruturais[chave]["qtde"] += 1
+            grupos_estruturais[chave]["soma_volume"] += volume_m3
+
+        # -------------------------
+        # ACESSÓRIO ERP
+        # -------------------------
+
+        param_desc = get_parameter_instance_or_type(membro, "ERP. DESCRIÇÃO")
+        if not param_desc:
             continue
-        chave = produto
-        if chave not in grupos:
-            grupos[chave] = {
-                "qtde": 0,
-                "soma_volume": 0.0
+
+        desc = param_desc.AsValueString()
+        if not desc:
+            continue
+
+        param_item = get_parameter_instance_or_type(membro, "ERP. CÓDIGO da FAMÍLIA")
+        param_comp = get_parameter_instance_or_type(membro, "_COMPRIMENTO")
+        param_unid = get_parameter_instance_or_type(membro, "ERP. UNIDADE")
+
+        if not param_item or not param_unid:
+            continue
+
+        item = param_item.AsValueString()
+        unid = param_unid.AsValueString()
+
+        comprimento_val = None
+
+        if param_comp:
+            try:
+                if param_comp.StorageType == StorageType.Double:
+                    # CONVERSÃO CORRETA: feet → metros
+                    comprimento_val = UnitUtils.ConvertFromInternalUnits(
+                        param_comp.AsDouble(),
+                        UnitTypeId.Meters
+                    )
+                else:
+                    comp_str = param_comp.AsValueString()
+                    if comp_str:
+                        comprimento_val = float(comp_str.replace(",", "."))
+            except:
+                comprimento_val = None
+
+        chave = (item, desc, unid, comprimento_val)
+
+        if chave not in grupos_acessorios:
+            grupos_acessorios[chave] = {
+                "qtde": 0
             }
-        grupos[chave]["qtde"] += 1
-        grupos[chave]["soma_volume"] += volume_m3
+
+        grupos_acessorios[chave]["qtde"] += 1
+
     xml_complementos = ""
-    for produto in grupos:
-        qtde = grupos[produto]["qtde"]
-        soma_volume = grupos[produto]["soma_volume"]
-        volume_medio = soma_volume / qtde if qtde else 0
-        peso = volume_medio * 2500
+
+    # ----------- ESTRUTURAIS -----------
+    for produto in grupos_estruturais:
+        qtde = grupos_estruturais[produto]["qtde"]
+
+        volume_medio = 0.0
+        peso = 0.0
+
         xml_complementos += (
             "\t\t\t<COMPLEMENTO>\n"
-            "\t\t\t\t<TIPO>ESTRUTURAL</TIPO>\n"
+            "\t\t\t\t<TIPO>CONSOLE</TIPO>\n"
             "\t\t\t\t<NOME>{}</NOME>\n"
             "\t\t\t\t<QTDE>{}</QTDE>\n"
             "\t\t\t\t<LARGURA>0</LARGURA>\n"
@@ -543,9 +620,35 @@ def build_complementos_xml(element):
         ).format(
             produto,
             qtde,
-            volume_medio,
-            peso
+            float(volume_medio),
+            float(peso)
         )
+
+    # ----------- ACESSÓRIOS ERP -----------
+    for chave in grupos_acessorios:
+
+        item, desc, unid, comprimento_val = chave
+        qtde = grupos_acessorios[chave]["qtde"]
+
+        if comprimento_val is not None:
+            qtde_final = float(comprimento_val) * float(qtde)
+        else:
+            qtde_final = float(qtde)
+
+        xml_complementos += (
+            "\t\t\t<ACESSORIO>\n"
+            "\t\t\t\t<ITEM>{}</ITEM>\n"
+            "\t\t\t\t<DESC>{}</DESC>\n"
+            "\t\t\t\t<QTDE>{:.3f}</QTDE>\n"
+            "\t\t\t\t<UNID>{}</UNID>\n"
+            "\t\t\t</ACESSORIO>\n"
+        ).format(
+            item,
+            desc,
+            qtde_final,
+            unid
+        )
+
     return xml_complementos
 
 def xml_unit_build(selected_element, grupo):
