@@ -538,16 +538,12 @@ def build_complementos_xml(element):
 
         if volume_m3 > 0 and fck and produto:
 
-            chave = produto
+            chave = produto  # agrupa por nome (ex: CONSOLE)
 
             if chave not in grupos_estruturais:
-                grupos_estruturais[chave] = {
-                    "qtde": 0,
-                    "soma_volume": 0.0
-                }
+                grupos_estruturais[chave] = 0
 
-            grupos_estruturais[chave]["qtde"] += 1
-            grupos_estruturais[chave]["soma_volume"] += volume_m3
+            grupos_estruturais[chave] += 1
 
         # -------------------------
         # ACESSÓRIO ERP
@@ -576,7 +572,6 @@ def build_complementos_xml(element):
         if param_comp:
             try:
                 if param_comp.StorageType == StorageType.Double:
-                    # CONVERSÃO CORRETA: feet → metros
                     comprimento_val = UnitUtils.ConvertFromInternalUnits(
                         param_comp.AsDouble(),
                         UnitTypeId.Meters
@@ -591,61 +586,67 @@ def build_complementos_xml(element):
         chave = (item, desc, unid, comprimento_val)
 
         if chave not in grupos_acessorios:
-            grupos_acessorios[chave] = {
-                "qtde": 0
-            }
+            grupos_acessorios[chave] = 0
 
-        grupos_acessorios[chave]["qtde"] += 1
+        grupos_acessorios[chave] += 1
 
     xml_complementos = ""
 
-    # ----------- ESTRUTURAIS -----------
-    for produto in grupos_estruturais:
-        qtde = grupos_estruturais[produto]["qtde"]
+    # ----------- COMPLEMENTOS ESTRUTURAIS (ORDENADOS POR DESC) -----------
 
-        volume_medio = 0.0
-        peso = 0.0
+    estruturais_ordenados = sorted(grupos_estruturais.keys(), key=lambda x: x.lower())
 
-        xml_complementos += (
-            "\t\t\t<COMPLEMENTO>\n"
-            "\t\t\t\t<TIPO>CONSOLE</TIPO>\n"
-            "\t\t\t\t<NOME>{}</NOME>\n"
-            "\t\t\t\t<QTDE>{}</QTDE>\n"
-            "\t\t\t\t<LARGURA>0</LARGURA>\n"
-            "\t\t\t\t<COMPRIMENTO>0</COMPRIMENTO>\n"
-            "\t\t\t\t<ALTURA>0</ALTURA>\n"
-            "\t\t\t\t<VOLUME>{:.3f}</VOLUME>\n"
-            "\t\t\t\t<PESO>{:.3f}</PESO>\n"
-            "\t\t\t</COMPLEMENTO>\n"
-        ).format(
-            produto,
-            qtde,
-            float(volume_medio),
-            float(peso)
-        )
+    for produto in estruturais_ordenados:
 
-    # ----------- ACESSÓRIOS ERP -----------
-    for chave in grupos_acessorios:
+        qtde = grupos_estruturais[produto]
 
-        item, desc, unid, comprimento_val = chave
-        qtde = grupos_acessorios[chave]["qtde"]
-
-        if comprimento_val is not None:
-            qtde_final = float(comprimento_val) * float(qtde)
-        else:
-            qtde_final = float(qtde)
+        item = str(element.Id.IntegerValue)
+        desc = produto
+        unid = "UN"
 
         xml_complementos += (
             "\t\t\t<ACESSORIO>\n"
             "\t\t\t\t<ITEM>{}</ITEM>\n"
             "\t\t\t\t<DESC>{}</DESC>\n"
-            "\t\t\t\t<QTDE>{:.3f}</QTDE>\n"
+            "\t\t\t\t<QTDE>{}</QTDE>\n"
             "\t\t\t\t<UNID>{}</UNID>\n"
             "\t\t\t</ACESSORIO>\n"
         ).format(
             item,
             desc,
-            qtde_final,
+            qtde,
+            unid
+        )
+
+    # ----------- ACESSÓRIOS ERP (ORDENADOS POR DESC) -----------
+
+    acessorios_ordenados = sorted(
+        grupos_acessorios.keys(),
+        key=lambda x: x[1].lower()  # x[1] = DESC
+    )
+
+    for chave in acessorios_ordenados:
+
+        item, desc, unid, comprimento_val = chave
+        qtde = grupos_acessorios[chave]
+
+        if comprimento_val is not None:
+            qtde_final = float(comprimento_val) * float(qtde)
+            qtde_str = "{:.3f}".format(qtde_final)
+        else:
+            qtde_str = str(qtde)
+
+        xml_complementos += (
+            "\t\t\t<ACESSORIO>\n"
+            "\t\t\t\t<ITEM>{}</ITEM>\n"
+            "\t\t\t\t<DESC>{}</DESC>\n"
+            "\t\t\t\t<QTDE>{}</QTDE>\n"
+            "\t\t\t\t<UNID>{}</UNID>\n"
+            "\t\t\t</ACESSORIO>\n"
+        ).format(
+            item,
+            desc,
+            qtde_str,
             unid
         )
 
