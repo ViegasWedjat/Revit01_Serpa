@@ -17,7 +17,7 @@ import datetime
 import time
 import re
 from Autodesk.Revit.DB import *
-from pyrevit import revit, forms
+from pyrevit import revit, forms, script
 import xml.etree.ElementTree as ET
 
 # HARD VARIABLES
@@ -26,6 +26,15 @@ uidoc = __revit__.ActiveUIDocument
 app = __revit__.Application
 PATH_SCRIPT = os.path.dirname(__file__)
 output_space = 0
+config = script.get_config("PlannixProject")
+gerar_pdfs = getattr(config, "print_pdfs", None)
+sobrescrever_pdfs = getattr(config, "overwrite_pdfs", None)
+if gerar_pdfs is None:
+    print("Caiu no Fallback.")
+    gerar_pdfs = True
+if sobrescrever_pdfs is None:
+    print("Caiu no Fallback.")
+    sobrescrever_pdfs = False
 
 # SOFT VARIABLES
 NOMEPECA = "Modelo"
@@ -387,27 +396,14 @@ def filter_elements(list_of_elements):
             accepted_output.append(element)
     return accepted_output
 
-# def group_elements(list_of_elements):
-#     for element in list_of_elements:
-
 def build_tabela_aco_xml(element):
     if element.AssemblyInstanceId == ElementId.InvalidElementId:
         return ""
     assembly = doc.GetElement(element.AssemblyInstanceId)
     if not isinstance(assembly, AssemblyInstance):
         return ""
-
-    def extrair_produto_tipo(material):
-        material = material.lstrip()
-        if material.startswith("CA-"):
-            return "AÇO", material
-        if material.startswith("FIO"):
-            resto = material[3:].lstrip()
-            return "FIO", resto
-        if material.startswith("CORD."):
-            resto = material[5:].lstrip()
-            return "CORDOALHA", resto
-        return material, material
+    FABRIC_CAT = int(BuiltInCategory.OST_FabricReinforcement)
+    REBAR_CAT = int(BuiltInCategory.OST_Rebar)
 
     def limpar_bitola(bitola):
         if not bitola:
@@ -420,11 +416,40 @@ def build_tabela_aco_xml(element):
         return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', text)]
 
     grupos = {}
+    telas = {}
     for mid in assembly.GetMemberIds():
-        rebar = doc.GetElement(mid)
-        if not rebar or not rebar.Category:
+        membro = doc.GetElement(mid)
+        if not membro or not membro.Category:
             continue
-        if rebar.Category.Id.IntegerValue != int(BuiltInCategory.OST_Rebar):
+        categoria_id = membro.Category.Id.IntegerValue
+        if categoria_id == FABRIC_CAT:
+            tela_type = doc.GetElement(membro.GetTypeId())
+            param_material = tela_type.LookupParameter("Material")
+            tipo = param_material.AsValueString() if param_material else "TELA"
+            param_bitola = tela_type.LookupParameter("Nome do tipo")
+            bitola = limpar_bitola(param_bitola.AsString() if param_bitola else "")
+            param_massa = membro.LookupParameter("Massa da folha de corte")
+            massa_kg = 0
+            if param_massa:
+                try:
+                    massa_kg = UnitUtils.ConvertFromInternalUnits(
+                        param_massa.AsDouble(),
+                        UnitTypeId.Kilograms
+                    )
+                except:
+                    massa_kg = 0
+            chave = (tipo, bitola)
+            if chave not in telas:
+                telas[chave] = 0
+            telas[chave] += massa_kg
+            continue
+        if categoria_id != REBAR_CAT:
+            continue
+        rebar = membro
+        rebar_type = doc.GetElement(rebar.GetTypeId())
+        param_material = rebar_type.LookupParameter("Material")
+        material = param_material.AsValueString() if param_material else ""
+        if material and material.upper().startswith("TELA"):
             continue
         param_pos = rebar.LookupParameter("Número do vergalhão")
         if not param_pos:
@@ -443,24 +468,30 @@ def build_tabela_aco_xml(element):
         param_comp = rebar.LookupParameter("Comprimento total da barra")
         if not param_comp:
             continue
-        comp_internal = param_comp.AsDouble()
         comprimento_m = UnitUtils.ConvertFromInternalUnits(
-            comp_internal,
+            param_comp.AsDouble(),
             UnitTypeId.Meters
         )
-        rebar_type = doc.GetElement(rebar.GetTypeId())
-        param_material = rebar_type.LookupParameter("Material")
-        material = param_material.AsValueString() if param_material else ""
-        produto = "AÇO"
-        tipo = material
         param_bitola = rebar_type.LookupParameter("Nome do tipo")
-        bitola_raw = param_bitola.AsString() if param_bitola else ""
-        bitola = limpar_bitola(bitola_raw)
+        bitola = limpar_bitola(param_bitola.AsString() if param_bitola else "")
+        fator_peso = None
+        param_fator = rebar_type.LookupParameter("Fator de Peso")
+        if param_fator:
+            try:
+                fator_peso = UnitUtils.ConvertFromInternalUnits(
+                    param_fator.AsDouble(),
+                    UnitTypeId.KilogramsPerMeter
+                )
+            except:
+                fator_peso = None
+        produto = "ACO"
+        tipo = material
         chave = (posicao, produto, tipo, bitola)
         if chave not in grupos:
             grupos[chave] = {
                 "qtde": 0,
-                "comp_total": 0.0
+                "comp_total": 0.0,
+                "fator_peso": fator_peso
             }
         grupos[chave]["qtde"] += qtde
         grupos[chave]["comp_total"] += comprimento_m
@@ -468,6 +499,12 @@ def build_tabela_aco_xml(element):
     for chave in sorted(grupos.keys(), key=lambda x: natural_key(x[0])):
         posicao, produto, tipo, bitola = chave
         valores = grupos[chave]
+        comp_total_original = valores["comp_total"]
+        fator_peso = valores.get("fator_peso")
+        if fator_peso is None:
+            comp_total_fatorado = comp_total_original
+        else:
+            comp_total_fatorado = comp_total_original * fator_peso
         xml_posicoes += (
             "\t\t\t<POSICAO>\n"
             "\t\t\t\t<POS>{}</POS>\n"
@@ -483,8 +520,28 @@ def build_tabela_aco_xml(element):
             tipo,
             bitola,
             valores["qtde"],
-            valores["comp_total"]
+            comp_total_fatorado
         )
+    contador_tela = 1
+    for chave, peso_total in telas.items():
+        tipo, bitola = chave
+        posicao = "T{}".format(contador_tela)
+        xml_posicoes += (
+            "\t\t\t<POSICAO>\n"
+            "\t\t\t\t<POS>{}</POS>\n"
+            "\t\t\t\t<PRODUTO>ACO</PRODUTO>\n"
+            "\t\t\t\t<TIPO>{}</TIPO>\n"
+            "\t\t\t\t<BITOLA>{}</BITOLA>\n"
+            "\t\t\t\t<QTDE>1</QTDE>\n"
+            "\t\t\t\t<COMP_TOTAL>{:.3f}</COMP_TOTAL>\n"
+            "\t\t\t</POSICAO>\n"
+        ).format(
+            posicao,
+            tipo,
+            bitola,
+            peso_total
+        )
+        contador_tela += 1
     return xml_posicoes
 
 def get_parameter_instance_or_type(element, param_name):
@@ -652,12 +709,126 @@ def build_complementos_xml(element):
 
     return xml_complementos
 
-def xml_unit_build(selected_element, grupo):
+
+def export_sheets_pdf(nome_peca, directory_path, sobrescrever):
+
+    collector = FilteredElementCollector(doc).OfClass(ViewSheet)
+
+    sheets = []
+
+    for sheet in collector:
+
+        param_tema = sheet.LookupParameter("Tema da Vista")
+        if not param_tema:
+            continue
+
+        tema = param_tema.AsValueString()
+        if tema != nome_peca:
+            continue
+
+        param_numero = sheet.LookupParameter("Número da folha")
+        if not param_numero:
+            continue
+
+        numero_folha = param_numero.AsValueString()
+        if not numero_folha:
+            continue
+
+        sheets.append((numero_folha, sheet))
+
+    if not sheets:
+        return []
+
+    sheets_sorted = sorted(
+        sheets,
+        key=lambda x: natural_key(x[0])
+    )
+
+    pdf_names = []
+
+    for numero_folha, sheet in sheets_sorted:
+
+        # lista PDFs antes da exportação
+        pdfs_antes = [
+            os.path.join(directory_path, f)
+            for f in os.listdir(directory_path)
+            if f.lower().endswith(".pdf")
+        ]
+
+        view_ids = List[ElementId]()
+        view_ids.Add(sheet.Id)
+
+        options = PDFExportOptions()
+        options.Combine = False
+
+        doc.Export(directory_path, view_ids, options)
+
+        time.sleep(0.7)
+
+        # lista PDFs depois da exportação
+        pdfs_depois = [
+            os.path.join(directory_path, f)
+            for f in os.listdir(directory_path)
+            if f.lower().endswith(".pdf")
+        ]
+
+        novos = list(set(pdfs_depois) - set(pdfs_antes))
+
+        if novos:
+            pdf_criado = novos[0]
+        else:
+            # fallback seguro
+            pdf_criado = max(pdfs_depois, key=os.path.getctime)
+
+        base_name = "Detalhamento_{}".format(numero_folha)
+        new_name = base_name + ".pdf"
+        new_path = os.path.join(directory_path, new_name)
+
+        # tratar conflito de nome
+        if os.path.exists(new_path):
+
+            if sobrescrever:
+
+                try:
+                    os.remove(new_path)
+                except:
+                    pass
+
+            else:
+
+                counter = 1
+
+                while True:
+
+                    new_name = "{} ({}){}.pdf".format(base_name, counter, "")
+                    new_path = os.path.join(directory_path, new_name)
+
+                    if not os.path.exists(new_path):
+                        break
+
+                    counter += 1
+
+        # mover/renomear arquivo
+        try:
+            os.rename(pdf_criado, new_path)
+        except:
+            import shutil
+            shutil.move(pdf_criado, new_path)
+
+        pdf_names.append(os.path.basename(new_path))
+
+    return pdf_names
+
+
+def xml_unit_build(selected_element, grupo, desenhos_pdf=None):
     quantidade = grupo["quantidade"]
     ids = grupo["ids"]
     nomepeca = get_nome_peca(selected_element)
     codcontrole = parameter_get(selected_element, CODCONTROLE)
-    desenho = parameter_get(selected_element, DESENHO)
+    if desenhos_pdf:
+        desenho = ";".join(desenhos_pdf)
+    else:
+        desenho = parameter_get(selected_element, DESENHO)
     tipoproduto = parameter_get(selected_element, TIPOPRODUTO)
     grupo_nome = parameter_get(selected_element, GRUPO)
     secao = parameter_get(selected_element, SECAO)
@@ -791,12 +962,27 @@ grupos_ordenados = sorted(
     grupos.values(),
     key=lambda g: natural_key(get_nome_peca(g["elemento_base"]))
 )
-for grupo in grupos_ordenados:
-    xml_unit = xml_unit_build(
-        grupo["elemento_base"],
-        grupo
-    )
-    xml_content.append(xml_unit)
+if gerar_pdfs:
+    with forms.ProgressBar(title='Gerando PDFs das viewsheets...', cancellable=False) as pb:
+        total = len(grupos_ordenados)
+        for i, grupo in enumerate(grupos_ordenados):
+            elemento = grupo["elemento_base"]
+            nome_peca = get_nome_peca(elemento)
+            pdf_files = export_sheets_pdf(nome_peca, directory_path, sobrescrever_pdfs)
+            xml_unit = xml_unit_build(
+                elemento,
+                grupo,
+                pdf_files
+            )
+            xml_content.append(xml_unit)
+            pb.update_progress(i + 1, total)
+else:
+    for grupo in grupos_ordenados:
+        xml_unit = xml_unit_build(
+            grupo["elemento_base"],
+            grupo
+        )
+        xml_content.append(xml_unit)
 xml_content.append(xml_detalhamento_close)
 with open(xml_file_path, "w") as xml_file:
     xml_file.write("".join(xml_content))

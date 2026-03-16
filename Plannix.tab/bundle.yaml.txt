@@ -1,0 +1,4 @@
+layout:
+  - Configurações
+  - Integração
+  - Coloração
