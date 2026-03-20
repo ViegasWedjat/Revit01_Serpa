@@ -98,11 +98,13 @@ def reject_invalid(list_of_elements):
         )
     return accepted_elements
 
+
 def natural_key(text):
     return [
         int(part) if part.isdigit() else part.lower()
         for part in re.split(r"(\d+)", text)
     ]
+
 
 def safe_float(value):
     if not value:
@@ -111,6 +113,7 @@ def safe_float(value):
         return float(value.replace(",", "."))
     except:
         return 0.0
+
 
 def group_elements(elements):
     grupos = {}
@@ -205,6 +208,7 @@ def group_elements(elements):
             grupos[chave]["soma_area"] += area_f
     return grupos
 
+
 def get_main_element(element):
     categorias_principais = [
         BuiltInCategory.OST_StructuralColumns,
@@ -227,6 +231,7 @@ def get_main_element(element):
     )
     return None
 
+
 def get_nome_peca(element):
     modelo = parameter_get(element, NOMEPECA)
     marca = parameter_get(element, MARCA)
@@ -236,6 +241,7 @@ def get_nome_peca(element):
         return modelo
     else:
         return str(element.Id)
+
 
 def clean_xml_text(value, parameter_name, element):
     if value is None:
@@ -253,6 +259,7 @@ def clean_xml_text(value, parameter_name, element):
                 .format(c, original_value, parameter_name, nome_peca)
             )
     return sanitized_value
+
 
 def parameter_get(element, parameter_name):
     if parameter_name == "":
@@ -395,6 +402,7 @@ def filter_elements(list_of_elements):
         if elemento_valido:
             accepted_output.append(element)
     return accepted_output
+
 
 def build_tabela_aco_xml(element):
     if element.AssemblyInstanceId == ElementId.InvalidElementId:
@@ -544,6 +552,7 @@ def build_tabela_aco_xml(element):
         contador_tela += 1
     return xml_posicoes
 
+
 def get_parameter_instance_or_type(element, param_name):
     param = element.LookupParameter(param_name)
     if not param:
@@ -556,76 +565,48 @@ def get_parameter_instance_or_type(element, param_name):
 
 
 def build_complementos_xml(element):
-
     if element.AssemblyInstanceId == ElementId.InvalidElementId:
         return ""
-
     assembly = doc.GetElement(element.AssemblyInstanceId)
     if not isinstance(assembly, AssemblyInstance):
         return ""
-
     grupos_estruturais = {}
     grupos_acessorios = {}
-
     for mid in assembly.GetMemberIds():
-
         membro = doc.GetElement(mid)
         if not membro or not membro.Category:
             continue
-
         if membro.Id == element.Id:
             continue
-
-        # -------------------------
-        # COMPLEMENTO ESTRUTURAL
-        # -------------------------
-
         param_volume = membro.LookupParameter(VOLUMEUNITARIO)
         volume_m3 = 0
-
         if param_volume:
             try:
                 volume_ft3 = param_volume.AsDouble()
                 volume_m3 = volume_ft3 * 0.028316846592
             except:
                 volume_m3 = 0
-
         fck = parameter_get(membro, CLASSECONCRETO)
         produto = parameter_get(membro, TIPOPRODUTO)
-
         if volume_m3 > 0 and fck and produto:
-
-            chave = produto  # agrupa por nome (ex: CONSOLE)
-
+            chave = produto
             if chave not in grupos_estruturais:
                 grupos_estruturais[chave] = 0
-
             grupos_estruturais[chave] += 1
-
-        # -------------------------
-        # ACESSÓRIO ERP
-        # -------------------------
-
         param_desc = get_parameter_instance_or_type(membro, "ERP. DESCRIÇÃO")
         if not param_desc:
             continue
-
         desc = param_desc.AsValueString()
         if not desc:
             continue
-
         param_item = get_parameter_instance_or_type(membro, "ERP. CÓDIGO da FAMÍLIA")
         param_comp = get_parameter_instance_or_type(membro, "_COMPRIMENTO")
         param_unid = get_parameter_instance_or_type(membro, "ERP. UNIDADE")
-
         if not param_item or not param_unid:
             continue
-
         item = param_item.AsValueString()
         unid = param_unid.AsValueString()
-
         comprimento_val = None
-
         if param_comp:
             try:
                 if param_comp.StorageType == StorageType.Double:
@@ -639,28 +620,18 @@ def build_complementos_xml(element):
                         comprimento_val = float(comp_str.replace(",", "."))
             except:
                 comprimento_val = None
-
         chave = (item, desc, unid, comprimento_val)
-
         if chave not in grupos_acessorios:
             grupos_acessorios[chave] = 0
 
         grupos_acessorios[chave] += 1
-
     xml_complementos = ""
-
-    # ----------- COMPLEMENTOS ESTRUTURAIS (ORDENADOS POR DESC) -----------
-
     estruturais_ordenados = sorted(grupos_estruturais.keys(), key=lambda x: x.lower())
-
     for produto in estruturais_ordenados:
-
         qtde = grupos_estruturais[produto]
-
         item = str(element.Id.IntegerValue)
         desc = produto
         unid = "UN"
-
         xml_complementos += (
             "\t\t\t<ACESSORIO>\n"
             "\t\t\t\t<ITEM>{}</ITEM>\n"
@@ -674,25 +645,18 @@ def build_complementos_xml(element):
             qtde,
             unid
         )
-
-    # ----------- ACESSÓRIOS ERP (ORDENADOS POR DESC) -----------
-
     acessorios_ordenados = sorted(
         grupos_acessorios.keys(),
         key=lambda x: x[1].lower()  # x[1] = DESC
     )
-
     for chave in acessorios_ordenados:
-
         item, desc, unid, comprimento_val = chave
         qtde = grupos_acessorios[chave]
-
         if comprimento_val is not None:
             qtde_final = float(comprimento_val) * float(qtde)
             qtde_str = "{:.3f}".format(qtde_final)
         else:
             qtde_str = str(qtde)
-
         xml_complementos += (
             "\t\t\t<ACESSORIO>\n"
             "\t\t\t\t<ITEM>{}</ITEM>\n"
@@ -706,117 +670,99 @@ def build_complementos_xml(element):
             qtde_str,
             unid
         )
-
     return xml_complementos
 
 
-def export_sheets_pdf(nome_peca, directory_path, sobrescrever):
-
+def export_sheets_pdf(nome_peca, directory_path, sobrescrever, selected_elements=None, is_last=False):
+    if not hasattr(export_sheets_pdf, "selection_cleared"):
+        uidoc.Selection.SetElementIds(List[ElementId]())
+        export_sheets_pdf.selection_cleared = True
     collector = FilteredElementCollector(doc).OfClass(ViewSheet)
-
     sheets = []
-
     for sheet in collector:
-
         param_tema = sheet.LookupParameter("Tema da Vista")
         if not param_tema:
             continue
-
         tema = param_tema.AsValueString()
         if tema != nome_peca:
             continue
-
         param_numero = sheet.LookupParameter("Número da folha")
         if not param_numero:
             continue
-
         numero_folha = param_numero.AsValueString()
         if not numero_folha:
             continue
-
         sheets.append((numero_folha, sheet))
-
     if not sheets:
         return []
-
     sheets_sorted = sorted(
         sheets,
         key=lambda x: natural_key(x[0])
     )
-
     pdf_names = []
-
     for numero_folha, sheet in sheets_sorted:
-
-        # lista PDFs antes da exportação
         pdfs_antes = [
             os.path.join(directory_path, f)
             for f in os.listdir(directory_path)
             if f.lower().endswith(".pdf")
         ]
-
         view_ids = List[ElementId]()
         view_ids.Add(sheet.Id)
-
         options = PDFExportOptions()
         options.Combine = False
-
         doc.Export(directory_path, view_ids, options)
-
         time.sleep(0.7)
-
-        # lista PDFs depois da exportação
         pdfs_depois = [
             os.path.join(directory_path, f)
             for f in os.listdir(directory_path)
             if f.lower().endswith(".pdf")
         ]
-
         novos = list(set(pdfs_depois) - set(pdfs_antes))
-
         if novos:
             pdf_criado = novos[0]
         else:
-            # fallback seguro
             pdf_criado = max(pdfs_depois, key=os.path.getctime)
+        param_nome = sheet.LookupParameter("Nome da folha")
+        nome_folha = param_nome.AsValueString() if param_nome else ""
+        param_tema = sheet.LookupParameter("Tema da Vista")
+        tema = param_tema.AsValueString() if param_tema else ""
 
-        base_name = "Detalhamento_{}".format(numero_folha)
+        def sanitize_filename(text):
+            if not text:
+                return ""
+            return re.sub(r'[\\/*?:"<>|]', "", text)
+
+        #numero_clean = sanitize_filename(numero_folha)
+        tema_clean = sanitize_filename(tema)
+        nome_clean = sanitize_filename(nome_folha)
+        base_name = "{} - {}".format(tema_clean, nome_clean).strip()
         new_name = base_name + ".pdf"
         new_path = os.path.join(directory_path, new_name)
-
-        # tratar conflito de nome
         if os.path.exists(new_path):
-
             if sobrescrever:
-
                 try:
                     os.remove(new_path)
                 except:
                     pass
-
             else:
-
                 counter = 1
-
                 while True:
-
                     new_name = "{} ({}){}.pdf".format(base_name, counter, "")
                     new_path = os.path.join(directory_path, new_name)
-
                     if not os.path.exists(new_path):
                         break
-
                     counter += 1
-
-        # mover/renomear arquivo
         try:
             os.rename(pdf_criado, new_path)
         except:
             import shutil
             shutil.move(pdf_criado, new_path)
-
         pdf_names.append(os.path.basename(new_path))
-
+    if is_last and selected_elements:
+        ids = List[ElementId]([e.Id for e in selected_elements if e and e.IsValidObject])
+        uidoc.Selection.SetElementIds(ids)
+        if hasattr(export_sheets_pdf, "selection_cleared"):
+            del export_sheets_pdf.selection_cleared
     return pdf_names
 
 
@@ -891,20 +837,16 @@ def xml_unit_build(selected_element, grupo, desenhos_pdf=None):
 # MAIN CODE
 
 # 1. Select the elements and part them into unique elements or grouped (repeated) elements:
-
 selected_elements = []
 for elem_id in uidoc.Selection.GetElementIds():
     elem = uidoc.Document.GetElement(elem_id)
     main_element = get_main_element(elem)
     if main_element:
         selected_elements.append(main_element)
-
-# Remove duplicated elements
 unique_dict = {}
 for element in selected_elements:
     unique_dict[element.UniqueId] = element
 selected_elements = list(unique_dict.values())
-
 if not selected_elements:
     print("Nenhum elemento foi selecionado no modelo. Favor selecionar e tentar novamente.")
     sys.exit(1)
@@ -953,7 +895,6 @@ xml_detalhamento_open = ('<DETALHAMENTOPLANNIX obra="' + OBRA + '" name="' + NAM
 xml_detalhamento_close = '</DETALHAMENTOPLANNIX>'
 
 # 5. Export the structured xml file:
-
 xml_content = []
 xml_content.append(xml_header)
 xml_content.append(xml_detalhamento_open)
@@ -968,7 +909,14 @@ if gerar_pdfs:
         for i, grupo in enumerate(grupos_ordenados):
             elemento = grupo["elemento_base"]
             nome_peca = get_nome_peca(elemento)
-            pdf_files = export_sheets_pdf(nome_peca, directory_path, sobrescrever_pdfs)
+            is_last = (i == total - 1)
+            pdf_files = export_sheets_pdf(
+                nome_peca,
+                directory_path,
+                sobrescrever_pdfs,
+                selected_elements,
+                is_last
+            )
             xml_unit = xml_unit_build(
                 elemento,
                 grupo,
