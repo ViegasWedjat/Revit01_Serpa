@@ -589,10 +589,13 @@ def build_complementos_xml(element):
         fck = parameter_get(membro, CLASSECONCRETO)
         produto = parameter_get(membro, TIPOPRODUTO)
         if volume_m3 > 0 and fck and produto:
-            chave = produto
-            if chave not in grupos_estruturais:
-                grupos_estruturais[chave] = 0
-            grupos_estruturais[chave] += 1
+            grupo_param = get_parameter_instance_or_type(membro, GRUPO)
+            grupo_val = grupo_param.AsValueString() if grupo_param else ""
+            if grupo_val == "COMPLEMENTO ESTRUTURAL":
+                chave = produto
+                if chave not in grupos_estruturais:
+                    grupos_estruturais[chave] = 0
+                grupos_estruturais[chave] += 1
         param_desc = get_parameter_instance_or_type(membro, "ERP. DESCRIÇÃO")
         if not param_desc:
             continue
