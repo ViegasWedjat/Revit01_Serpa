@@ -23,6 +23,9 @@ output      = script.get_output()
 PATH_SCRIPT = os.path.dirname(__file__)
 xaml_path   = os.path.join(PATH_SCRIPT, "colorir.xaml")
 
+# PARAM
+PARAM_REVISOES = "21. NÚMERO DE REVISÕES"
+
 # CONFIG (persistência de estado)
 config = script.get_config("PlannixColorir")
 
@@ -74,6 +77,15 @@ cordv = Color(102,   0,   0)
 cordc = Color(255, 255, 102)
 cormt = Color(102, 255, 102)
 
+# CORES DE REVISÃO
+rev0 = Color(192, 192, 192)
+rev1 = Color( 0,   191, 255)
+rev2 = Color(0, 250,  154)
+rev3 = Color(238, 238,   0)
+rev4 = Color(249, 178,   8)
+rev5 = Color(238,   44,   44)
+rev6 = Color(180,   0,   0)
+
 # STATUS → COR
 status_color_map = {
     statuspj: corpj,
@@ -122,7 +134,7 @@ categorias_principais_ids = set([
 default_xaml = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         Title="Colorir Modelo"
-        Height="200"
+        Height="240"
         Width="400"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize">
@@ -135,12 +147,16 @@ default_xaml = """
                    Margin="0,0,0,15"/>
 
         <RadioButton Name="radio_atualizar"
-                     Content="Atualizar cores dos status dos elementos"
+                     Content="Aplicar cores dos status do Plannix nos elementos"
                      IsChecked="True"
                      Margin="0,0,0,8"/>
 
+        <RadioButton Name="radio_revisoes"
+                     Content="Aplicar cores dos números de revisões nos elementos"
+                     Margin="0,0,0,8"/>
+
         <RadioButton Name="radio_remover"
-                     Content="Remover cores dos status dos elementos"
+                     Content="Remover cores dos elementos"
                      Margin="0,0,0,15"/>
 
         <StackPanel Orientation="Horizontal"
@@ -192,9 +208,32 @@ def get_color_for_status(status_value):
     return cordf
 
 
+def get_color_for_revisoes(element):
+    param = element.LookupParameter(PARAM_REVISOES)
+    if not param:
+        return rev0
+    try:
+        valor = param.AsInteger()
+    except:
+        return rev0
+    if valor <= 0:
+        return rev0
+    elif valor == 1:
+        return rev1
+    elif valor == 2:
+        return rev2
+    elif valor == 3:
+        return rev3
+    elif valor == 4:
+        return rev4
+    elif valor == 5:
+        return rev5
+    else:
+        return rev6
+
+
 def make_override(color, solid_fill_id):
     ogs = OverrideGraphicSettings()
-    ogs.SetProjectionLineColor(color)
     ogs.SetSurfaceForegroundPatternColor(color)
     if solid_fill_id != ElementId.InvalidElementId:
         ogs.SetSurfaceForegroundPatternId(solid_fill_id)
@@ -212,13 +251,11 @@ def get_main_element(assembly):
     return None
 
 
-def apply_colors():
+def apply_colors_generic(get_color_func, transaction_name, msg):
     solid_fill_id = get_solid_fill_id()
     count = 0
-    with Transaction(doc, "Colorir Modelo - Atualizar") as t:
+    with Transaction(doc, transaction_name) as t:
         t.Start()
-
-        # Elementos das categorias de interesse (exceto montagens)
         for cat in categorias_interesse:
             if cat == BuiltInCategory.OST_Assemblies:
                 continue
@@ -228,13 +265,10 @@ def apply_colors():
                 .WhereElementIsNotElementType()
             )
             for element in collector:
-                status = get_status(element)
-                color  = get_color_for_status(status)
-                ogs    = make_override(color, solid_fill_id)
+                color = get_color_func(element)
+                ogs   = make_override(color, solid_fill_id)
                 view.SetElementOverrides(element.Id, ogs)
                 count += 1
-
-        # Montagens: cor definida pelo status da peça principal
         assemblies = (
             FilteredElementCollector(doc, view.Id)
             .OfCategory(BuiltInCategory.OST_Assemblies)
@@ -244,14 +278,28 @@ def apply_colors():
             if not isinstance(assembly, AssemblyInstance):
                 continue
             main_el = get_main_element(assembly)
-            status  = get_status(main_el)
-            color   = get_color_for_status(status)
+            color   = get_color_func(main_el)
             ogs     = make_override(color, solid_fill_id)
             view.SetElementOverrides(assembly.Id, ogs)
             count += 1
-
         t.Commit()
-    print("Cores aplicadas a {} elementos.".format(count))
+    print("{} {} elementos.".format(msg, count))
+
+
+def apply_colors():
+    apply_colors_generic(
+        lambda el: get_color_for_status(get_status(el)),
+        "Colorir Modelo - Status",
+        "Cores de status aplicadas a"
+    )
+
+
+def apply_revision_colors():
+    apply_colors_generic(
+        get_color_for_revisoes,
+        "Colorir Modelo - Revisões",
+        "Cores de revisão aplicadas a"
+    )
 
 
 def remove_colors():
@@ -284,21 +332,32 @@ window = forms.WPFWindow(xaml_path)
 opcao_salva = getattr(config, "opcao_colorir", "atualizar")
 if opcao_salva == "remover":
     window.radio_remover.IsChecked = True
+elif opcao_salva == "revisoes":
+    window.radio_revisoes.IsChecked = True
 else:
     window.radio_atualizar.IsChecked = True
 
 
 def aplicar(sender, args):
     atualizar = window.radio_atualizar.IsChecked
+    revisoes  = window.radio_revisoes.IsChecked
     remover   = window.radio_remover.IsChecked
+
     # Salvar estado
-    config.opcao_colorir = "remover" if remover else "atualizar"
+    if remover:
+        config.opcao_colorir = "remover"
+    elif revisoes:
+        config.opcao_colorir = "revisoes"
+    else:
+        config.opcao_colorir = "atualizar"
     script.save_config()
 
     window.Close()
     try:
         if atualizar:
             apply_colors()
+        elif revisoes:
+            apply_revision_colors()
         elif remover:
             remove_colors()
     except Exception as e:

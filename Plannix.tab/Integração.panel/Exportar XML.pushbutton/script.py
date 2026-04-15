@@ -61,12 +61,13 @@ OBRA = "Obra da Serpa"
 OBRAPARAM = ""
 NAME = "Serpa"
 PROJETISTA = "Projetista"
+PARAM_EXPORTADO = "20. EXPORTADO?"
+PARAM_REVISOES  = "21. NÚMERO DE REVISÕES"
 
 # FUNCTIONS
 def reject_invalid(list_of_elements):
     accepted_elements = []
     rejected_count = 0
-    # >>> CATEGORIAS DE INTERESSE <<<
     categorias_interesse = [
         BuiltInCategory.OST_StructuralColumns,
         BuiltInCategory.OST_StructuralFraming,
@@ -74,7 +75,6 @@ def reject_invalid(list_of_elements):
         BuiltInCategory.OST_Floors,
         BuiltInCategory.OST_Walls,
         BuiltInCategory.OST_Assemblies,
-        # BuiltInCategory.OST_GenericModel,
     ]
     categorias_ids = [int(cat) for cat in categorias_interesse]
     for element in list_of_elements:
@@ -263,7 +263,6 @@ def clean_xml_text(value, parameter_name, element):
 
 def parameter_get(element, parameter_name):
     if parameter_name == "":
-        # print("Parâmetro ignorado.")
         return ""
     param_instance = element.LookupParameter(parameter_name)
     if param_instance:
@@ -351,6 +350,7 @@ def parameter_get(element, parameter_name):
     # )
     return ""
 
+
 def filter_elements(list_of_elements):
     accepted_output = []
     parametros_obrigatorios = [
@@ -359,7 +359,7 @@ def filter_elements(list_of_elements):
         GRUPO,
         SECAO,
         INFOADICIONAL,
-        COMPRIMENTO,      # será tratado dinamicamente para pilares
+        COMPRIMENTO,
         VOLUMEUNITARIO
     ]
     for element in list_of_elements:
@@ -626,7 +626,6 @@ def build_complementos_xml(element):
         chave = (item, desc, unid, comprimento_val)
         if chave not in grupos_acessorios:
             grupos_acessorios[chave] = 0
-
         grupos_acessorios[chave] += 1
     xml_complementos = ""
     estruturais_ordenados = sorted(grupos_estruturais.keys(), key=lambda x: x.lower())
@@ -642,15 +641,10 @@ def build_complementos_xml(element):
             "\t\t\t\t<QTDE>{}</QTDE>\n"
             "\t\t\t\t<UNID>{}</UNID>\n"
             "\t\t\t</ACESSORIO>\n"
-        ).format(
-            item,
-            desc,
-            qtde,
-            unid
-        )
+        ).format(item, desc, qtde, unid)
     acessorios_ordenados = sorted(
         grupos_acessorios.keys(),
-        key=lambda x: x[1].lower()  # x[1] = DESC
+        key=lambda x: x[1].lower()
     )
     for chave in acessorios_ordenados:
         item, desc, unid, comprimento_val = chave
@@ -667,12 +661,7 @@ def build_complementos_xml(element):
             "\t\t\t\t<QTDE>{}</QTDE>\n"
             "\t\t\t\t<UNID>{}</UNID>\n"
             "\t\t\t</ACESSORIO>\n"
-        ).format(
-            item,
-            desc,
-            qtde_str,
-            unid
-        )
+        ).format(item, desc, qtde_str, unid)
     return xml_complementos
 
 
@@ -698,10 +687,7 @@ def export_sheets_pdf(nome_peca, directory_path, sobrescrever, selected_elements
         sheets.append((numero_folha, sheet))
     if not sheets:
         return []
-    sheets_sorted = sorted(
-        sheets,
-        key=lambda x: natural_key(x[0])
-    )
+    sheets_sorted = sorted(sheets, key=lambda x: natural_key(x[0]))
     pdf_names = []
     for numero_folha, sheet in sheets_sorted:
         pdfs_antes = [
@@ -713,6 +699,7 @@ def export_sheets_pdf(nome_peca, directory_path, sobrescrever, selected_elements
         view_ids.Add(sheet.Id)
         options = PDFExportOptions()
         options.Combine = False
+        options.HideCropBoundaries = False
         doc.Export(directory_path, view_ids, options)
         time.sleep(0.7)
         pdfs_depois = [
@@ -735,7 +722,6 @@ def export_sheets_pdf(nome_peca, directory_path, sobrescrever, selected_elements
                 return ""
             return re.sub(r'[\\/*?:"<>|]', "", text)
 
-        #numero_clean = sanitize_filename(numero_folha)
         tema_clean = sanitize_filename(tema)
         nome_clean = sanitize_filename(nome_folha)
         base_name = "{} - {}".format(tema_clean, nome_clean).strip()
@@ -837,9 +823,31 @@ def xml_unit_build(selected_element, grupo, desenhos_pdf=None):
     )
     return element_unit_string
 
+
+def atualizar_parametros_exportacao(elementos):
+    """Marca exportado=True e incrementa revisões em todos os elementos exportados."""
+    with Transaction(doc, "Atualizar parâmetros de exportação") as t:
+        t.Start()
+        for element in elementos:
+            nome = get_nome_peca(element)
+            # 20. EXPORTADO?
+            param_exp = element.LookupParameter(PARAM_EXPORTADO)
+            if param_exp:
+                param_exp.Set(1)
+            # 21. NÚMERO DE REVISÕES
+            param_rev = element.LookupParameter(PARAM_REVISOES)
+            if param_rev:
+                try:
+                    atual = param_rev.AsInteger()
+                    param_rev.Set(atual + 1)
+                except:
+                    pass
+        t.Commit()
+
+
 # MAIN CODE
 
-# 1. Select the elements and part them into unique elements or grouped (repeated) elements:
+# 1. Selecionar e validar elementos
 selected_elements = []
 for elem_id in uidoc.Selection.GetElementIds():
     elem = uidoc.Document.GetElement(elem_id)
@@ -866,9 +874,7 @@ if not filtered_elements:
     )
     sys.exit(0)
 
-# 2. Define the output directory path:
-#directory_path = r"C:\Users\Viegas\Desktop\Profissional\Freelance\3. Serpa\Output"
-#directory_path = r"C:\Users\Viegas\Desktop\Profissional\Freelance\4. Concrete Show\Output"
+# 2. Definir diretório de saída
 rvt_path = doc.PathName
 if not rvt_path:
     print(
@@ -878,7 +884,7 @@ if not rvt_path:
     sys.exit(1)
 directory_path = os.path.dirname(rvt_path)
 
-# 3. Define the output file:
+# 3. Definir arquivo de saída
 current_datetime = datetime.datetime.now()
 datetime_string = current_datetime.strftime("[%Y-%m-%d][%Hh%Mm]")
 base_name = "Export" + datetime_string
@@ -891,13 +897,13 @@ while os.path.exists(xml_file_path):
     xml_file_path = os.path.join(directory_path, output_string)
     counter += 1
 
-# 4. Build the xml basic structure:
+# 4. Estrutura base do XML
 xml_header = '<?xml version="1.0" encoding="ISO-8859-1" ?>\n'
 xml_detalhamento_open = ('<DETALHAMENTOPLANNIX obra="' + OBRA + '" name="' + NAME + '" projetista="' + PROJETISTA +
                          '">\n')
 xml_detalhamento_close = '</DETALHAMENTOPLANNIX>'
 
-# 5. Export the structured xml file:
+# 5. Exportar XML
 xml_content = []
 xml_content.append(xml_header)
 xml_content.append(xml_detalhamento_open)
@@ -920,23 +926,22 @@ if gerar_pdfs:
                 selected_elements,
                 is_last
             )
-            xml_unit = xml_unit_build(
-                elemento,
-                grupo,
-                pdf_files
-            )
+            xml_unit = xml_unit_build(elemento, grupo, pdf_files)
             xml_content.append(xml_unit)
             pb.update_progress(i + 1, total)
 else:
     for grupo in grupos_ordenados:
-        xml_unit = xml_unit_build(
-            grupo["elemento_base"],
-            grupo
-        )
+        xml_unit = xml_unit_build(grupo["elemento_base"], grupo)
         xml_content.append(xml_unit)
 xml_content.append(xml_detalhamento_close)
+
+# 6. Gravar arquivo XML
 with open(xml_file_path, "w") as xml_file:
     xml_file.write("".join(xml_content))
+
+# 7. Atualizar parâmetros de exportação nos elementos
+atualizar_parametros_exportacao(filtered_elements)
+
 if output_space == 1:
     print('\nElementos válidos exportados com sucesso para o documento "{}" dentro do diretório "{}".'
           .format(output_string, directory_path))
