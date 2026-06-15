@@ -24,7 +24,8 @@ PATH_SCRIPT = os.path.dirname(__file__)
 xaml_path   = os.path.join(PATH_SCRIPT, "colorir.xaml")
 
 # PARAM
-PARAM_REVISOES = "21. NÚMERO DE REVISÕES"
+PARAM_EXPORTADO = "20. EXPORTADO?"
+PARAM_REVISOES  = "21. NÚMERO DE REVISÕES"
 
 # CONFIG (persistência de estado)
 config = script.get_config("PlannixColorir")
@@ -78,13 +79,13 @@ cordc = Color(255, 255, 102)
 cormt = Color(102, 255, 102)
 
 # CORES DE REVISÃO
-rev0 = Color(192, 192, 192)
-rev1 = Color( 0,   191, 255)
-rev2 = Color(0, 250,  154)
-rev3 = Color(238, 238,   0)
-rev4 = Color(249, 178,   8)
-rev5 = Color(238,   44,   44)
-rev6 = Color(180,   0,   0)
+notexp = Color(192, 192, 192)
+rev0   = Color(  0, 191, 255)
+rev1   = Color(  0, 250, 154)
+rev2   = Color(238, 238,   0)
+rev3   = Color(249, 178,   8)
+rev4   = Color(238,  44,  44)
+rev5   = Color(180,   0,   0)
 
 # STATUS → COR
 status_color_map = {
@@ -209,27 +210,29 @@ def get_color_for_status(status_value):
 
 
 def get_color_for_revisoes(element):
-    param = element.LookupParameter(PARAM_REVISOES)
-    if not param:
-        return rev0
+    if element is None:
+        return notexp
+    param_exp = element.LookupParameter(PARAM_EXPORTADO)
+    param_rev = element.LookupParameter(PARAM_REVISOES)
+    exportado = param_exp.AsInteger() == 1 if param_exp else False
+    if not exportado:
+        return notexp
     try:
-        valor = param.AsInteger()
+        revisoes = param_rev.AsInteger() if param_rev else 0
     except:
+        revisoes = 0
+    if revisoes <= 0:
         return rev0
-    if valor <= 0:
-        return rev0
-    elif valor == 1:
+    elif revisoes == 1:
         return rev1
-    elif valor == 2:
+    elif revisoes == 2:
         return rev2
-    elif valor == 3:
+    elif revisoes == 3:
         return rev3
-    elif valor == 4:
+    elif revisoes == 4:
         return rev4
-    elif valor == 5:
-        return rev5
     else:
-        return rev6
+        return rev5
 
 
 def make_override(color, solid_fill_id):

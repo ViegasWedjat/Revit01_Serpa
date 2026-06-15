@@ -23,7 +23,7 @@ try:
     default_xaml = """
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         Title="Configurações"
-        Height="240"
+        Height="280"
         Width="460"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize">
@@ -40,8 +40,13 @@ try:
                        TextWrapping="Wrap"/>
         </CheckBox>
 
-        <CheckBox Name="check_overwrite_pdf" Margin="0,0,0,20">
+        <CheckBox Name="check_overwrite_pdf" Margin="0,0,0,10">
             <TextBlock Text="Sobrescrever arquivos com mesmo nome ao imprimir PDFs?"
+                       TextWrapping="Wrap"/>
+        </CheckBox>
+
+        <CheckBox Name="check_include_pdf_names" Margin="0,0,0,20">
+            <TextBlock Text="Sempre incluir nome dos arquivos de detalhamento na exportação?"
                        TextWrapping="Wrap"/>
         </CheckBox>
 
@@ -75,12 +80,14 @@ try:
     # Carregar configurações
     window.check_print_pdf.IsChecked = getattr(config, "print_pdfs", True)
     window.check_overwrite_pdf.IsChecked = getattr(config, "overwrite_pdfs", False)
+    window.check_include_pdf_names.IsChecked = getattr(config, "include_pdf_names", False)
 
     # Evento dos botões
     def salvar(sender, args):
 
         config.print_pdfs = window.check_print_pdf.IsChecked
         config.overwrite_pdfs = window.check_overwrite_pdf.IsChecked
+        config.include_pdf_names = window.check_include_pdf_names.IsChecked
 
         script.save_config()
 

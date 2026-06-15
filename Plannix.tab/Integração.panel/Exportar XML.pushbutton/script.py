@@ -29,6 +29,7 @@ output_space = 0
 config = script.get_config("PlannixProject")
 gerar_pdfs = getattr(config, "print_pdfs", None)
 sobrescrever_pdfs = getattr(config, "overwrite_pdfs", None)
+incluir_nomes_pdf = getattr(config, "include_pdf_names", False)
 if gerar_pdfs is None:
     print("Caiu no Fallback.")
     gerar_pdfs = True
@@ -602,12 +603,25 @@ def build_complementos_xml(element):
         desc = param_desc.AsValueString()
         if not desc:
             continue
+        # Filtro 1: verificar "ERP. ETAPA"
+        etapas_validas = ["ARMAÇÃO", "CONCRETAGEM", "ACABAMENTO"]
+        param_etapa = get_parameter_instance_or_type(membro, "ERP. ETAPA")
+        if not param_etapa:
+            continue
+        etapa = param_etapa.AsValueString()
+        if not etapa or etapa.upper() not in etapas_validas:
+            continue
+        # Filtro 2: verificar "ERP. CÓDIGO da FAMÍLIA"
         param_item = get_parameter_instance_or_type(membro, "ERP. CÓDIGO da FAMÍLIA")
-        param_comp = get_parameter_instance_or_type(membro, "_COMPRIMENTO")
-        param_unid = get_parameter_instance_or_type(membro, "ERP. UNIDADE")
-        if not param_item or not param_unid:
+        if not param_item:
             continue
         item = param_item.AsValueString()
+        if not item or item.upper() == "NÃO CONTABILIZAR":
+            continue
+        param_comp = get_parameter_instance_or_type(membro, "_COMPRIMENTO")
+        param_unid = get_parameter_instance_or_type(membro, "ERP. UNIDADE")
+        if not param_unid:
+            continue
         unid = param_unid.AsValueString()
         comprimento_val = None
         if param_comp:
@@ -663,6 +677,46 @@ def build_complementos_xml(element):
             "\t\t\t</ACESSORIO>\n"
         ).format(item, desc, qtde_str, unid)
     return xml_complementos
+
+
+def get_pdf_names(nome_peca, directory_path):
+    """Calcula os nomes dos PDFs que seriam gerados para uma peça, sem exportar."""
+    collector = FilteredElementCollector(doc).OfClass(ViewSheet)
+    sheets = []
+    for sheet in collector:
+        param_tema = sheet.LookupParameter("Tema da Vista")
+        if not param_tema:
+            continue
+        tema = param_tema.AsValueString()
+        if tema != nome_peca:
+            continue
+        param_numero = sheet.LookupParameter("Número da folha")
+        if not param_numero:
+            continue
+        numero_folha = param_numero.AsValueString()
+        if not numero_folha:
+            continue
+        sheets.append((numero_folha, sheet))
+    if not sheets:
+        return []
+    sheets_sorted = sorted(sheets, key=lambda x: natural_key(x[0]))
+    pdf_names = []
+    for numero_folha, sheet in sheets_sorted:
+        param_nome = sheet.LookupParameter("Nome da folha")
+        nome_folha = param_nome.AsValueString() if param_nome else ""
+        param_tema = sheet.LookupParameter("Tema da Vista")
+        tema = param_tema.AsValueString() if param_tema else ""
+
+        def sanitize_filename(text):
+            if not text:
+                return ""
+            return re.sub(r'[\\/*?:"<>|]', "", text)
+
+        tema_clean = sanitize_filename(tema)
+        nome_clean = sanitize_filename(nome_folha)
+        base_name = "{} - {}".format(tema_clean, nome_clean).strip()
+        pdf_names.append(base_name + ".pdf")
+    return pdf_names
 
 
 def export_sheets_pdf(nome_peca, directory_path, sobrescrever, selected_elements=None, is_last=False):
@@ -825,23 +879,33 @@ def xml_unit_build(selected_element, grupo, desenhos_pdf=None):
 
 
 def atualizar_parametros_exportacao(elementos):
-    """Marca exportado=True e incrementa revisões em todos os elementos exportados."""
+    """Atualiza parâmetros 20 e 21 conforme lógica de primeira exportação vs. revisões."""
     with Transaction(doc, "Atualizar parâmetros de exportação") as t:
         t.Start()
         for element in elementos:
-            nome = get_nome_peca(element)
-            # 20. EXPORTADO?
             param_exp = element.LookupParameter(PARAM_EXPORTADO)
-            if param_exp:
-                param_exp.Set(1)
-            # 21. NÚMERO DE REVISÕES
             param_rev = element.LookupParameter(PARAM_REVISOES)
+            # Inicializar revisões se vazio
             if param_rev:
                 try:
-                    atual = param_rev.AsInteger()
-                    param_rev.Set(atual + 1)
+                    param_rev.AsInteger()
                 except:
-                    pass
+                    param_rev.Set(0)
+            if param_exp:
+                ja_exportado = param_exp.AsInteger() == 1
+                if not ja_exportado:
+                    # Primeira exportação: marcar exportado, zerar revisões
+                    param_exp.Set(1)
+                    if param_rev:
+                        param_rev.Set(0)
+                else:
+                    # Exportação subsequente: incrementar revisões
+                    if param_rev:
+                        try:
+                            atual = param_rev.AsInteger()
+                            param_rev.Set(atual + 1)
+                        except:
+                            param_rev.Set(1)
         t.Commit()
 
 
@@ -931,7 +995,10 @@ if gerar_pdfs:
             pb.update_progress(i + 1, total)
 else:
     for grupo in grupos_ordenados:
-        xml_unit = xml_unit_build(grupo["elemento_base"], grupo)
+        elemento = grupo["elemento_base"]
+        nome_peca = get_nome_peca(elemento)
+        pdf_files = get_pdf_names(nome_peca, directory_path) if incluir_nomes_pdf else None
+        xml_unit = xml_unit_build(elemento, grupo, pdf_files)
         xml_content.append(xml_unit)
 xml_content.append(xml_detalhamento_close)
 
